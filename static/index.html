@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Perser Club Chess Table</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="setup-panel" aria-label="Tournament setup">
+        <div class="title-row">
+          <div>
+            <p class="eyebrow">Chess Pairings</p>
+            <h1>Perser Chess Club</h1>
+          </div>
+          <button class="icon-button" id="resetPlayers" type="button" title="Reset players" aria-label="Reset players">
+            ↺
+          </button>
+        </div>
+
+        <label class="field-label" for="tableName">Table name</label>
+        <form class="add-player" id="tableForm">
+          <input id="tableName" name="tableName" type="text" autocomplete="off" placeholder="Tournament table" />
+          <button type="submit">Create</button>
+        </form>
+        <div class="table-tabs" id="tableTabs" aria-label="Tournament tables"></div>
+        <button class="secondary close-table" id="closeTable" type="button">Close active table</button>
+        <p class="hint" id="tableHint">Create up to 3 tables.</p>
+
+        <label class="field-label" for="playerName">Player</label>
+        <form class="add-player" id="playerForm">
+          <input id="playerName" name="playerName" type="text" autocomplete="off" placeholder="Name" />
+          <button type="submit">Add</button>
+        </form>
+
+        <div class="player-list" id="playerList" aria-label="Players"></div>
+
+        <p class="error" id="errorMessage" role="alert"></p>
+      </section>
+
+      <section class="table-panel" aria-label="Generated schedule">
+        <div class="table-header">
+          <div>
+            <p class="eyebrow">Tournament</p>
+            <h2 id="summaryTitle">No table yet</h2>
+          </div>
+          <div class="header-tools">
+            <div class="summary-grid" id="summaryGrid"></div>
+            <div class="backup-actions">
+              <button class="secondary" id="saveBackup" type="button">Save</button>
+              <button class="secondary" id="restoreBackup" type="button">Back</button>
+              <button id="finishTournament" type="button">Finish</button>
+            </div>
+            <p class="backup-status" id="backupStatus">No saved backup</p>
+            <p class="backup-status" id="finishStatus"></p>
+          </div>
+        </div>
+
+        <div class="standings-wrap">
+          <div class="section-heading">
+            <h3>Standings</h3>
+            <span id="completedGames">0 submitted</span>
+          </div>
+          <div class="standings" id="standings"></div>
+        </div>
+
+        <div class="schedule" id="schedule"></div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
