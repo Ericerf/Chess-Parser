@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.DS_Store
+tables.json
+telegram_bot_state.json
