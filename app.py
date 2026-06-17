@@ -7,6 +7,8 @@ import argparse
 import html
 import json
 import re
+import threading
+import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -17,6 +19,9 @@ from round_robin_chess import create_round_robin
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
 OUTPUTS_DIR = ROOT / "outputs"
+TABLES_FILE = ROOT / "tables.json"
+MAX_TABLES = 3
+tables_lock = threading.Lock()
 
 
 class ChessTableHandler(SimpleHTTPRequestHandler):
@@ -25,6 +30,9 @@ class ChessTableHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        if path == "/api/tables":
+            self.get_tables()
+            return
         if path == "/":
             self.path = "/index.html"
         super().do_GET()
@@ -37,6 +45,41 @@ class ChessTableHandler(SimpleHTTPRequestHandler):
             self.finish_tournament()
         else:
             self.send_error(404, "Not found")
+
+    def do_PUT(self) -> None:
+        path = urlparse(self.path).path
+        if path == "/api/tables":
+            self.save_tables()
+        else:
+            self.send_error(404, "Not found")
+
+    def get_tables(self) -> None:
+        self.send_json(200, read_tables_state())
+
+    def save_tables(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length) or "{}")
+            tables = payload.get("tables", [])
+            if not isinstance(tables, list):
+                raise ValueError("Tables must be a list.")
+
+            current_state = read_tables_state()
+            replace_all = bool(payload.get("replace"))
+            next_tables = sanitize_tables(tables)
+            if not replace_all:
+                next_tables = merge_tables(current_state.get("tables", []), next_tables)
+
+            state = {
+                "tables": next_tables,
+                "updatedAt": time.time(),
+            }
+            write_tables_state(state)
+            self.send_json(200, state)
+        except ValueError as error:
+            self.send_json(400, {"error": str(error)})
+        except json.JSONDecodeError:
+            self.send_json(400, {"error": "Request body must be valid JSON."})
 
     def create_schedule(self) -> None:
         try:
@@ -119,6 +162,88 @@ def next_tournament_index() -> int:
         if match:
             indexes.append(int(match.group(1)))
     return max(indexes, default=0) + 1
+
+
+def read_tables_state() -> dict:
+    with tables_lock:
+        if not TABLES_FILE.exists():
+            return {"tables": [], "updatedAt": 0}
+        try:
+            data = json.loads(TABLES_FILE.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {"tables": [], "updatedAt": 0}
+        if not isinstance(data, dict) or not isinstance(data.get("tables"), list):
+            return {"tables": [], "updatedAt": 0}
+        return {
+            "tables": sanitize_tables(data.get("tables", [])),
+            "updatedAt": data.get("updatedAt", 0),
+        }
+
+
+def write_tables_state(state: dict) -> None:
+    with tables_lock:
+        TABLES_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def sanitize_tables(tables: list) -> list[dict]:
+    clean_tables = []
+    for index, table in enumerate(tables[:MAX_TABLES], start=1):
+        if not isinstance(table, dict):
+            continue
+        clean_tables.append(
+            {
+                "id": str(table.get("id") or f"table-{index}"),
+                "name": str(table.get("name") or "Untitled table")[:80],
+                "players": sanitize_players(table.get("players", [])),
+                "results": sanitize_results(table.get("results", {})),
+                "backup": sanitize_backup(table.get("backup")),
+                "finishStatus": str(table.get("finishStatus") or "")[:160],
+            }
+        )
+    return clean_tables
+
+
+def merge_tables(existing_tables: list, incoming_tables: list) -> list[dict]:
+    merged = sanitize_tables(existing_tables)
+    by_id = {table["id"]: table for table in merged}
+    order = [table["id"] for table in merged]
+
+    for table in incoming_tables:
+        table_id = table["id"]
+        if table_id not in by_id:
+            order.append(table_id)
+        by_id[table_id] = table
+
+    return [by_id[table_id] for table_id in order if table_id in by_id][:MAX_TABLES]
+
+
+def sanitize_players(players: object) -> list[str]:
+    if not isinstance(players, list):
+        return []
+    return [str(player)[:80] for player in players]
+
+
+def sanitize_results(results: object) -> dict[str, str]:
+    if not isinstance(results, dict):
+        return {}
+    allowed = {"white", "draw", "black"}
+    return {
+        str(key)[:240]: str(value)
+        for key, value in results.items()
+        if str(value) in allowed
+    }
+
+
+def sanitize_backup(backup: object) -> dict | None:
+    if not isinstance(backup, dict):
+        return None
+    return {
+        "players": sanitize_players(backup.get("players", [])),
+        "results": sanitize_results(backup.get("results", {})),
+        "completed": int(backup.get("completed", 0) or 0),
+        "totalGames": int(backup.get("totalGames", 0) or 0),
+        "savedAt": str(backup.get("savedAt") or ""),
+    }
 
 
 def build_report_html(index: int, payload: dict) -> str:

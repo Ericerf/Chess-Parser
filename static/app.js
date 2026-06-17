@@ -1,11 +1,12 @@
 const defaultPlayers = [];
 const maxTables = 3;
-const storageKey = "roundRobinChessTables";
 
-let tables = loadTables();
-let activeTableId = tables[0]?.id || null;
+let tables = [];
+let activeTableId = null;
 let latestRounds = [];
 let buildTimer = null;
+let saveTimer = null;
+let lastServerUpdate = 0;
 
 const tableForm = document.querySelector("#tableForm");
 const tableName = document.querySelector("#tableName");
@@ -32,36 +33,100 @@ function currentTable() {
   return tables.find((table) => table.id === activeTableId) || null;
 }
 
-function loadTables() {
-  try {
-    const raw = window.localStorage.getItem(storageKey);
-    const parsed = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed.slice(0, maxTables).map((table) => ({
-      id: table.id || createId(),
-      name: table.name || "Untitled table",
-      players: Array.isArray(table.players) ? table.players : [],
-      results: table.results && typeof table.results === "object" ? table.results : {},
-      backup: table.backup || null,
-      finishStatus: table.finishStatus || "",
-    }));
-  } catch {
-    return [];
-  }
-}
-
-function saveTables() {
-  window.localStorage.setItem(storageKey, JSON.stringify(tables));
-}
-
 function createId() {
   if (window.crypto && typeof window.crypto.randomUUID === "function") {
     return window.crypto.randomUUID();
   }
 
   return `table-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function loadTablesFromServer({ preserveActive = true } = {}) {
+  const response = await fetch("/api/tables");
+  const state = await response.json();
+  tables = normalizeTables(state.tables || []);
+  lastServerUpdate = state.updatedAt || 0;
+
+  if (!preserveActive || !tables.some((table) => table.id === activeTableId)) {
+    activeTableId = tables[0]?.id || null;
+  }
+}
+
+function normalizeTables(rawTables) {
+  return rawTables.slice(0, maxTables).map((table) => ({
+    id: table.id || createId(),
+    name: table.name || "Untitled table",
+    players: Array.isArray(table.players) ? table.players : [],
+    results: table.results && typeof table.results === "object" ? table.results : {},
+    backup: table.backup || null,
+    finishStatus: table.finishStatus || "",
+  }));
+}
+
+function queueSaveTables() {
+  window.clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(saveTables, 150);
+}
+
+async function saveTables({ replace = false } = {}) {
+  const table = currentTable();
+  const payloadTables = replace || !table ? tables : [table];
+  const response = await fetch("/api/tables", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tables: payloadTables, replace }),
+  });
+  const state = await response.json();
+  if (!response.ok) {
+    throw new Error(state.error || "Could not save tables.");
+  }
+  lastServerUpdate = state.updatedAt || lastServerUpdate;
+}
+
+function legacyTables() {
+  try {
+    const raw = window.localStorage.getItem("roundRobinChessTables");
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? normalizeTables(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
+function isEditing() {
+  const tag = document.activeElement?.tagName;
+  return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
+}
+
+async function refreshTablesFromServer() {
+  if (isEditing()) {
+    return;
+  }
+
+  const response = await fetch("/api/tables");
+  const state = await response.json();
+  if (!response.ok || (state.updatedAt || 0) <= lastServerUpdate) {
+    return;
+  }
+
+  tables = normalizeTables(state.tables || []);
+  lastServerUpdate = state.updatedAt || 0;
+  if (!tables.some((table) => table.id === activeTableId)) {
+    activeTableId = tables[0]?.id || null;
+  }
+  renderApp({ persist: false });
+}
+
+async function initApp() {
+  await loadTablesFromServer({ preserveActive: false });
+  const oldTables = legacyTables();
+  if (!tables.length && oldTables.length) {
+    tables = oldTables;
+    activeTableId = tables[0]?.id || null;
+    await saveTables({ replace: true });
+  }
+  renderApp({ persist: false });
+  window.setInterval(refreshTablesFromServer, 3000);
 }
 
 function createTable(name) {
@@ -87,16 +152,16 @@ function createTable(name) {
   tables.push(table);
   activeTableId = table.id;
   tableName.value = "";
-  saveTables();
+  queueSaveTables();
   renderApp();
 }
 
-function renderApp() {
+function renderApp({ persist = true } = {}) {
   renderTableTabs();
   renderPlayers();
   renderBackupStatus();
   finishStatus.textContent = currentTable()?.finishStatus || "";
-  buildSchedule();
+  buildSchedule({ persist });
 }
 
 function renderTableTabs() {
@@ -116,7 +181,7 @@ function renderTableTabs() {
       button.title = item.name;
       button.addEventListener("click", () => {
         activeTableId = item.id;
-        renderApp();
+        renderApp({ persist: false });
       });
       return button;
     }),
@@ -131,7 +196,7 @@ function closeActiveTable() {
 
   tables.splice(tableIndex, 1);
   activeTableId = tables[Math.min(tableIndex, tables.length - 1)]?.id || null;
-  saveTables();
+  saveTables({ replace: true });
   renderApp();
 }
 
@@ -159,7 +224,7 @@ function renderPlayers() {
       input.ariaLabel = `Player ${index + 1}`;
       input.addEventListener("input", () => {
         table.players[index] = input.value;
-        saveTables();
+        queueSaveTables();
         queueBuildSchedule();
       });
 
@@ -171,7 +236,7 @@ function renderPlayers() {
       remove.ariaLabel = `Remove ${name || `player ${index + 1}`}`;
       remove.addEventListener("click", () => {
         table.players.splice(index, 1);
-        saveTables();
+        queueSaveTables();
         renderPlayers();
         buildSchedule();
       });
@@ -217,7 +282,7 @@ function queueBuildSchedule() {
   buildTimer = window.setTimeout(buildSchedule, 250);
 }
 
-async function buildSchedule() {
+async function buildSchedule({ persist = true } = {}) {
   setError("");
   const table = currentTable();
 
@@ -232,7 +297,7 @@ async function buildSchedule() {
   if (cleanPlayers().length < 2) {
     latestRounds = [];
     table.results = {};
-    saveTables();
+    if (persist) queueSaveTables();
     renderSchedule();
     renderStandings();
     renderBackupStatus();
@@ -249,7 +314,7 @@ async function buildSchedule() {
   if (!response.ok) {
     latestRounds = [];
     table.results = {};
-    saveTables();
+    if (persist) queueSaveTables();
     renderSchedule();
     renderStandings();
     setError(body.error || "Could not generate table.");
@@ -261,7 +326,7 @@ async function buildSchedule() {
   renderSchedule();
   renderStandings();
   renderBackupStatus();
-  saveTables();
+  if (persist) queueSaveTables();
 }
 
 function renderSchedule() {
@@ -345,7 +410,7 @@ function renderSchedule() {
           } else {
             delete table.results[key];
           }
-          saveTables();
+          queueSaveTables();
           renderSchedule();
           renderStandings();
         });
@@ -492,7 +557,7 @@ function writeBackup() {
     return;
   }
   table.backup = currentBackup();
-  saveTables();
+  queueSaveTables();
   renderBackupStatus();
 }
 
@@ -519,7 +584,7 @@ async function finishCurrentTournament() {
   }
 
   table.finishStatus = `Final table saved: ${body.htmlName}`;
-  saveTables();
+  queueSaveTables();
   finishStatus.textContent = table.finishStatus;
 }
 
@@ -569,7 +634,7 @@ function restoreLastBackup() {
 
   table.players = Array.isArray(table.backup.players) ? [...table.backup.players] : [...defaultPlayers];
   table.results = table.backup.results && typeof table.backup.results === "object" ? { ...table.backup.results } : {};
-  saveTables();
+  queueSaveTables();
   renderPlayers();
   buildSchedule();
 }
@@ -633,7 +698,7 @@ playerForm.addEventListener("submit", (event) => {
   }
   table.players.push(name);
   playerName.value = "";
-  saveTables();
+  queueSaveTables();
   renderPlayers();
   buildSchedule();
 });
@@ -647,7 +712,7 @@ resetPlayers.addEventListener("click", () => {
   table.results = {};
   table.backup = null;
   table.finishStatus = "";
-  saveTables();
+  queueSaveTables();
   renderApp();
 });
 
@@ -655,4 +720,4 @@ saveBackup.addEventListener("click", writeBackup);
 restoreBackup.addEventListener("click", restoreLastBackup);
 finishTournament.addEventListener("click", finishCurrentTournament);
 
-renderApp();
+initApp();
