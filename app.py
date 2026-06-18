@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import os
 import re
+import secrets
 import threading
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -22,6 +24,11 @@ OUTPUTS_DIR = ROOT / "outputs"
 TABLES_FILE = ROOT / "tables.json"
 MAX_TABLES = 3
 tables_lock = threading.Lock()
+admin_sessions_lock = threading.Lock()
+admin_sessions: dict[str, float] = {}
+ADMIN_PIN = os.environ.get("ADMIN_PIN", "chess26").strip()
+ADMIN_COOKIE = "perser_admin_session"
+ADMIN_SESSION_SECONDS = 12 * 60 * 60
 
 
 class ChessTableHandler(SimpleHTTPRequestHandler):
@@ -30,6 +37,9 @@ class ChessTableHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        if path == "/api/admin/status":
+            self.admin_status()
+            return
         if path == "/api/tables":
             self.get_tables()
             return
@@ -41,6 +51,10 @@ class ChessTableHandler(SimpleHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/schedule":
             self.create_schedule()
+        elif path == "/api/admin/login":
+            self.admin_login()
+        elif path == "/api/admin/logout":
+            self.admin_logout()
         elif path == "/api/finish":
             self.finish_tournament()
         else:
@@ -57,6 +71,9 @@ class ChessTableHandler(SimpleHTTPRequestHandler):
         self.send_json(200, read_tables_state())
 
     def save_tables(self) -> None:
+        if not self.require_admin():
+            return
+
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length) or "{}")
@@ -80,6 +97,59 @@ class ChessTableHandler(SimpleHTTPRequestHandler):
             self.send_json(400, {"error": str(error)})
         except json.JSONDecodeError:
             self.send_json(400, {"error": "Request body must be valid JSON."})
+
+    def admin_status(self) -> None:
+        self.send_json(
+            200,
+            {
+                "configured": bool(ADMIN_PIN),
+                "admin": self.is_admin(),
+            },
+        )
+
+    def admin_login(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length) or "{}")
+            pin = str(payload.get("pin") or "")
+            if not ADMIN_PIN:
+                self.send_json(400, {"error": "ADMIN_PIN is not configured on the server."})
+                return
+            if not secrets.compare_digest(pin, ADMIN_PIN):
+                self.send_json(403, {"error": "Wrong admin PIN."})
+                return
+
+            token = secrets.token_urlsafe(32)
+            with admin_sessions_lock:
+                admin_sessions[token] = time.time() + ADMIN_SESSION_SECONDS
+            self.send_json(
+                200,
+                {"configured": True, "admin": True},
+                headers=[
+                    (
+                        "Set-Cookie",
+                        f"{ADMIN_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age={ADMIN_SESSION_SECONDS}",
+                    )
+                ],
+            )
+        except json.JSONDecodeError:
+            self.send_json(400, {"error": "Request body must be valid JSON."})
+
+    def admin_logout(self) -> None:
+        token = self.admin_token()
+        if token:
+            with admin_sessions_lock:
+                admin_sessions.pop(token, None)
+        self.send_json(
+            200,
+            {"configured": bool(ADMIN_PIN), "admin": False},
+            headers=[
+                (
+                    "Set-Cookie",
+                    f"{ADMIN_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+                )
+            ],
+        )
 
     def create_schedule(self) -> None:
         try:
@@ -106,6 +176,9 @@ class ChessTableHandler(SimpleHTTPRequestHandler):
             self.send_json(400, {"error": "Request body must be valid JSON."})
 
     def finish_tournament(self) -> None:
+        if not self.require_admin():
+            return
+
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length) or "{}")
@@ -145,11 +218,42 @@ class ChessTableHandler(SimpleHTTPRequestHandler):
         except json.JSONDecodeError:
             self.send_json(400, {"error": "Request body must be valid JSON."})
 
-    def send_json(self, status: int, body: dict) -> None:
+    def require_admin(self) -> bool:
+        if not ADMIN_PIN or self.is_admin():
+            return True
+        self.send_json(403, {"error": "Admin login required."})
+        return False
+
+    def is_admin(self) -> bool:
+        if not ADMIN_PIN:
+            return True
+        token = self.admin_token()
+        if not token:
+            return False
+        with admin_sessions_lock:
+            expires_at = admin_sessions.get(token)
+            if not expires_at:
+                return False
+            if expires_at < time.time():
+                admin_sessions.pop(token, None)
+                return False
+            return True
+
+    def admin_token(self) -> str:
+        cookie = self.headers.get("Cookie", "")
+        for part in cookie.split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == ADMIN_COOKIE:
+                return value
+        return ""
+
+    def send_json(self, status: int, body: dict, headers: list[tuple[str, str]] | None = None) -> None:
         data = json.dumps(body).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        for name, value in headers or []:
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(data)
 

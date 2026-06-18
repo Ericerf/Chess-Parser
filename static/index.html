@@ -19,6 +19,19 @@
           </button>
         </div>
 
+        <section class="admin-box" aria-label="Admin access">
+          <div class="admin-heading">
+            <span>Admin</span>
+            <strong id="adminState">Viewer</strong>
+          </div>
+          <form class="admin-login" id="adminForm">
+            <input id="adminPin" name="adminPin" type="password" autocomplete="current-password" placeholder="Admin PIN" />
+            <button type="submit">Login</button>
+          </form>
+          <button class="secondary admin-logout" id="adminLogout" type="button">Logout</button>
+          <p class="hint" id="adminHint">Login to edit results.</p>
+        </section>
+
         <label class="field-label" for="tableName">Table name</label>
         <form class="add-player" id="tableForm">
           <input id="tableName" name="tableName" type="text" autocomplete="off" placeholder="Tournament table" />

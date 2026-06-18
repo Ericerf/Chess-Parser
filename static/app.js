@@ -7,7 +7,14 @@ let latestRounds = [];
 let buildTimer = null;
 let saveTimer = null;
 let lastServerUpdate = 0;
+let adminConfigured = false;
+let isAdmin = false;
 
+const adminForm = document.querySelector("#adminForm");
+const adminPin = document.querySelector("#adminPin");
+const adminState = document.querySelector("#adminState");
+const adminHint = document.querySelector("#adminHint");
+const adminLogout = document.querySelector("#adminLogout");
 const tableForm = document.querySelector("#tableForm");
 const tableName = document.querySelector("#tableName");
 const tableTabs = document.querySelector("#tableTabs");
@@ -65,10 +72,17 @@ function normalizeTables(rawTables) {
 
 function queueSaveTables() {
   window.clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(saveTables, 150);
+  saveTimer = window.setTimeout(() => {
+    saveTables().catch((error) => setError(error.message));
+  }, 150);
 }
 
 async function saveTables({ replace = false } = {}) {
+  if (!canEdit()) {
+    setError("Admin login required.");
+    return;
+  }
+
   const table = currentTable();
   const payloadTables = replace || !table ? tables : [table];
   const response = await fetch("/api/tables", {
@@ -81,6 +95,60 @@ async function saveTables({ replace = false } = {}) {
     throw new Error(state.error || "Could not save tables.");
   }
   lastServerUpdate = state.updatedAt || lastServerUpdate;
+}
+
+function canEdit() {
+  return !adminConfigured || isAdmin;
+}
+
+async function loadAdminStatus() {
+  const response = await fetch("/api/admin/status");
+  const status = await response.json();
+  adminConfigured = Boolean(status.configured);
+  isAdmin = Boolean(status.admin);
+  renderAdmin();
+}
+
+function renderAdmin() {
+  const editable = canEdit();
+  adminState.textContent = editable ? "Admin" : "Viewer";
+  adminState.className = editable ? "admin-ok" : "admin-locked";
+  adminForm.hidden = !adminConfigured || isAdmin;
+  adminLogout.hidden = !adminConfigured || !isAdmin;
+  adminPin.value = "";
+  adminHint.textContent = adminConfigured
+    ? editable
+      ? "Editing is enabled."
+      : "Login to edit tables and results."
+    : "ADMIN_PIN is not configured; editing is open.";
+}
+
+async function loginAdmin(pin) {
+  const response = await fetch("/api/admin/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pin }),
+  });
+  const status = await response.json();
+  if (!response.ok) {
+    setError(status.error || "Admin login failed.");
+    return;
+  }
+  adminConfigured = Boolean(status.configured);
+  isAdmin = Boolean(status.admin);
+  setError("");
+  renderAdmin();
+  renderApp({ persist: false });
+}
+
+async function logoutAdmin() {
+  const response = await fetch("/api/admin/logout", { method: "POST" });
+  const status = await response.json();
+  adminConfigured = Boolean(status.configured);
+  isAdmin = Boolean(status.admin);
+  setError(response.ok ? "" : status.error || "Admin logout failed.");
+  renderAdmin();
+  renderApp({ persist: false });
 }
 
 function legacyTables() {
@@ -118,6 +186,7 @@ async function refreshTablesFromServer() {
 }
 
 async function initApp() {
+  await loadAdminStatus();
   await loadTablesFromServer({ preserveActive: false });
   const oldTables = legacyTables();
   if (!tables.length && oldTables.length) {
@@ -130,6 +199,11 @@ async function initApp() {
 }
 
 function createTable(name) {
+  if (!canEdit()) {
+    setError("Admin login required.");
+    return;
+  }
+
   if (tables.length >= maxTables) {
     setError("You can keep up to 3 tables at the same time.");
     return;
@@ -166,8 +240,9 @@ function renderApp({ persist = true } = {}) {
 
 function renderTableTabs() {
   const table = currentTable();
-  tableForm.querySelector("button").disabled = tables.length >= maxTables;
-  closeTable.disabled = !table;
+  tableName.disabled = !canEdit();
+  tableForm.querySelector("button").disabled = !canEdit() || tables.length >= maxTables;
+  closeTable.disabled = !canEdit() || !table;
   tableHint.textContent = table
     ? `Active table: ${table.name}`
     : "Create up to 3 tables.";
@@ -189,6 +264,11 @@ function renderTableTabs() {
 }
 
 function closeActiveTable() {
+  if (!canEdit()) {
+    setError("Admin login required.");
+    return;
+  }
+
   const tableIndex = tables.findIndex((table) => table.id === activeTableId);
   if (tableIndex === -1) {
     return;
@@ -202,7 +282,7 @@ function closeActiveTable() {
 
 function renderPlayers() {
   const table = currentTable();
-  const disabled = !table;
+  const disabled = !table || !canEdit();
   playerName.disabled = disabled;
   playerForm.querySelector("button").disabled = disabled;
   resetPlayers.disabled = disabled;
@@ -222,6 +302,7 @@ function renderPlayers() {
       const input = document.createElement("input");
       input.value = name;
       input.ariaLabel = `Player ${index + 1}`;
+      input.disabled = !canEdit();
       input.addEventListener("input", () => {
         table.players[index] = input.value;
         queueSaveTables();
@@ -232,6 +313,7 @@ function renderPlayers() {
       remove.className = "remove-player";
       remove.type = "button";
       remove.textContent = "×";
+      remove.disabled = !canEdit();
       remove.title = "Remove player";
       remove.ariaLabel = `Remove ${name || `player ${index + 1}`}`;
       remove.addEventListener("click", () => {
@@ -400,6 +482,7 @@ function renderSchedule() {
           <option value="black">${escapeHtml(game.black)} wins</option>
         `;
         result.value = activeResults()[key] || "";
+        result.disabled = !canEdit();
         result.addEventListener("change", () => {
           const table = currentTable();
           if (!table) {
@@ -587,6 +670,11 @@ function currentBackup() {
 }
 
 function writeBackup() {
+  if (!canEdit()) {
+    setError("Admin login required.");
+    return;
+  }
+
   const table = currentTable();
   if (!table) {
     return;
@@ -597,6 +685,11 @@ function writeBackup() {
 }
 
 async function finishCurrentTournament() {
+  if (!canEdit()) {
+    setError("Admin login required.");
+    return;
+  }
+
   const table = currentTable();
   setError("");
   finishStatus.textContent = "";
@@ -668,6 +761,11 @@ function displayResultLabel(result, game) {
 }
 
 function restoreLastBackup() {
+  if (!canEdit()) {
+    setError("Admin login required.");
+    return;
+  }
+
   const table = currentTable();
   if (!table?.backup) {
     renderBackupStatus();
@@ -729,10 +827,22 @@ tableForm.addEventListener("submit", (event) => {
   createTable(tableName.value);
 });
 
+adminForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  loginAdmin(adminPin.value);
+});
+
+adminLogout.addEventListener("click", logoutAdmin);
+
 closeTable.addEventListener("click", closeActiveTable);
 
 playerForm.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (!canEdit()) {
+    setError("Admin login required.");
+    return;
+  }
+
   const table = currentTable();
   const name = playerName.value.trim();
   if (!table || !name) {
@@ -746,6 +856,11 @@ playerForm.addEventListener("submit", (event) => {
 });
 
 resetPlayers.addEventListener("click", () => {
+  if (!canEdit()) {
+    setError("Admin login required.");
+    return;
+  }
+
   const table = currentTable();
   if (!table) {
     return;
