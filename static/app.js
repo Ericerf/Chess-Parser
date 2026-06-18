@@ -531,8 +531,6 @@ function renderStandings() {
           <th>W</th>
           <th>D</th>
           <th>L</th>
-          <th>Wh</th>
-          <th>Bl</th>
           <th>BH</th>
         </tr>
       </thead>
@@ -548,8 +546,6 @@ function renderStandings() {
                 <td>${row.wins}</td>
                 <td>${row.draws}</td>
                 <td>${row.losses}</td>
-                <td>${row.whiteGames}</td>
-                <td>${row.blackGames}</td>
                 <td>${formatPoints(row.buchholz)}</td>
               </tr>
             `,
@@ -571,8 +567,6 @@ function calculateStandings() {
         wins: 0,
         draws: 0,
         losses: 0,
-        whiteGames: 0,
-        blackGames: 0,
         opponents: [],
         headToHead: {},
         direct: 0,
@@ -586,9 +580,6 @@ function calculateStandings() {
       if (!table[game.white] || !table[game.black]) {
         return;
       }
-
-      table[game.white].whiteGames += 1;
-      table[game.black].blackGames += 1;
 
       const result = activeResults()[gameKey(roundIndex, boardIndex, game)];
       if (!result) {
@@ -729,8 +720,6 @@ function finalTournamentPayload() {
       wins: row.wins,
       draws: row.draws,
       losses: row.losses,
-      whiteGames: row.whiteGames,
-      blackGames: row.blackGames,
       buchholz: formatPoints(row.buchholz),
     })),
     completed: submittedResults().length,
