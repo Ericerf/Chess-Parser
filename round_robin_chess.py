@@ -34,7 +34,7 @@ def create_round_robin(players: list[str]) -> list[list[Pairing]]:
     if len(names) % 2 == 1:
         names.append(BYE)
 
-    rounds: list[list[Pairing]] = []
+    first_cycle: list[list[Pairing]] = []
     color_balance = {name: 0 for name in names if name != BYE}
     field_size = len(names)
     half = field_size // 2
@@ -62,10 +62,14 @@ def create_round_robin(players: list[str]) -> list[list[Pairing]]:
             color_balance[black] -= 1
             round_pairings.append(Pairing(white=white, black=black))
 
-        rounds.append(round_pairings)
+        first_cycle.append(round_pairings)
         rotation = [rotation[0], rotation[-1], *rotation[1:-1]]
 
-    return rounds
+    second_cycle = [
+        [Pairing(white=pairing.black, black=pairing.white) for pairing in round_pairings]
+        for round_pairings in first_cycle
+    ]
+    return [*first_cycle, *second_cycle]
 
 
 def format_table(rounds: list[list[Pairing]]) -> str:

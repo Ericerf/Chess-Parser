@@ -450,6 +450,7 @@ function renderStandings() {
           <th>L</th>
           <th>Wh</th>
           <th>Bl</th>
+          <th>BH</th>
         </tr>
       </thead>
       <tbody>
@@ -466,6 +467,7 @@ function renderStandings() {
                 <td>${row.losses}</td>
                 <td>${row.whiteGames}</td>
                 <td>${row.blackGames}</td>
+                <td>${formatPoints(row.buchholz)}</td>
               </tr>
             `,
           )
@@ -488,6 +490,10 @@ function calculateStandings() {
         losses: 0,
         whiteGames: 0,
         blackGames: 0,
+        opponents: [],
+        headToHead: {},
+        direct: 0,
+        buchholz: 0,
       },
     ]),
   );
@@ -508,29 +514,58 @@ function calculateStandings() {
 
       table[game.white].played += 1;
       table[game.black].played += 1;
+      table[game.white].opponents.push(game.black);
+      table[game.black].opponents.push(game.white);
 
       if (result === "white") {
         table[game.white].points += 1;
         table[game.white].wins += 1;
         table[game.black].losses += 1;
+        addHeadToHead(table, game.white, game.black, 1);
+        addHeadToHead(table, game.black, game.white, 0);
       } else if (result === "black") {
         table[game.black].points += 1;
         table[game.black].wins += 1;
         table[game.white].losses += 1;
+        addHeadToHead(table, game.white, game.black, 0);
+        addHeadToHead(table, game.black, game.white, 1);
       } else {
         table[game.white].points += 0.5;
         table[game.black].points += 0.5;
         table[game.white].draws += 1;
         table[game.black].draws += 1;
+        addHeadToHead(table, game.white, game.black, 0.5);
+        addHeadToHead(table, game.black, game.white, 0.5);
       }
     });
   });
 
-  return Object.values(table).sort((a, b) => {
+  const rows = Object.values(table);
+  rows.forEach((row) => {
+    row.direct = rows
+      .filter((other) => other.player !== row.player && other.points === row.points)
+      .reduce((total, opponent) => total + directScore(row, opponent), 0);
+    row.buchholz = row.opponents.reduce(
+      (total, opponent) => total + (table[opponent]?.points || 0),
+      0,
+    );
+  });
+
+  return rows.sort((a, b) => {
     if (b.points !== a.points) return b.points - a.points;
+    if (b.direct !== a.direct) return b.direct - a.direct;
+    if (b.buchholz !== a.buchholz) return b.buchholz - a.buchholz;
     if (b.wins !== a.wins) return b.wins - a.wins;
     return a.player.localeCompare(b.player);
   });
+}
+
+function addHeadToHead(table, player, opponent, points) {
+  table[player].headToHead[opponent] = (table[player].headToHead[opponent] || 0) + points;
+}
+
+function directScore(playerRow, opponentRow) {
+  return playerRow.headToHead[opponentRow.player] || 0;
 }
 
 function submittedResults() {
@@ -595,8 +630,15 @@ function finalTournamentPayload() {
     players: cleanPlayers(),
     rounds: roundsForExport(),
     standings: calculateStandings().map((row) => ({
-      ...row,
+      player: row.player,
       points: formatPoints(row.points),
+      played: row.played,
+      wins: row.wins,
+      draws: row.draws,
+      losses: row.losses,
+      whiteGames: row.whiteGames,
+      blackGames: row.blackGames,
+      buchholz: formatPoints(row.buchholz),
     })),
     completed: submittedResults().length,
     totalGames: latestRounds.flat().length,

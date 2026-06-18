@@ -341,7 +341,7 @@ table {
 th,
 td {
   border-bottom: 1px solid #ece7dc;
-  padding: 10px 8px;
+  padding: 10px 6px;
   text-align: right;
   white-space: nowrap;
 }
@@ -358,17 +358,17 @@ td:nth-child(2) {
   overflow: hidden;
   text-align: left;
   text-overflow: ellipsis;
-  width: 28%;
+  width: 24%;
 }
 
 th:first-child,
 td:first-child {
-  width: 54px;
+  width: 48px;
 }
 
 th:nth-child(n + 3),
 td:nth-child(n + 3) {
-  width: 44px;
+  width: 40px;
 }
 
 tbody tr:last-child td {
