@@ -368,7 +368,7 @@ def build_report_html(index: int, payload: dict) -> str:
         f"<td>{escape(row.get('wins', 0))}</td>"
         f"<td>{escape(row.get('draws', 0))}</td>"
         f"<td>{escape(row.get('losses', 0))}</td>"
-        f"<td>{escape(row.get('buchholz', 0))}</td>"
+        f"<td>{escape(row.get('sonnebornBerger', 0))}</td>"
         "</tr>"
         for position, row in enumerate(standings, start=1)
         if isinstance(row, dict)
@@ -408,7 +408,7 @@ def build_report_html(index: int, payload: dict) -> str:
       <h2>Final Standings</h2>
       <table>
         <thead>
-          <tr><th>Rank</th><th>Player</th><th>Pts</th><th>Pl</th><th>W</th><th>D</th><th>L</th><th>BH</th></tr>
+          <tr><th>Rank</th><th>Player</th><th>Pts</th><th>Pl</th><th>W</th><th>D</th><th>L</th><th>SB</th></tr>
         </thead>
         <tbody>
           {standings_rows}

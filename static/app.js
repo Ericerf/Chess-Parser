@@ -531,7 +531,7 @@ function renderStandings() {
           <th>W</th>
           <th>D</th>
           <th>L</th>
-          <th>BH</th>
+          <th>SB</th>
         </tr>
       </thead>
       <tbody>
@@ -546,7 +546,7 @@ function renderStandings() {
                 <td>${row.wins}</td>
                 <td>${row.draws}</td>
                 <td>${row.losses}</td>
-                <td>${formatPoints(row.buchholz)}</td>
+                <td>${formatPoints(row.sonnebornBerger)}</td>
               </tr>
             `,
           )
@@ -569,8 +569,9 @@ function calculateStandings() {
         losses: 0,
         opponents: [],
         headToHead: {},
+        scoredGames: [],
         direct: 0,
-        buchholz: 0,
+        sonnebornBerger: 0,
       },
     ]),
   );
@@ -597,12 +598,16 @@ function calculateStandings() {
         table[game.black].losses += 1;
         addHeadToHead(table, game.white, game.black, 1);
         addHeadToHead(table, game.black, game.white, 0);
+        table[game.white].scoredGames.push({ opponent: game.black, score: 1 });
+        table[game.black].scoredGames.push({ opponent: game.white, score: 0 });
       } else if (result === "black") {
         table[game.black].points += 1;
         table[game.black].wins += 1;
         table[game.white].losses += 1;
         addHeadToHead(table, game.white, game.black, 0);
         addHeadToHead(table, game.black, game.white, 1);
+        table[game.white].scoredGames.push({ opponent: game.black, score: 0 });
+        table[game.black].scoredGames.push({ opponent: game.white, score: 1 });
       } else {
         table[game.white].points += 0.5;
         table[game.black].points += 0.5;
@@ -610,6 +615,8 @@ function calculateStandings() {
         table[game.black].draws += 1;
         addHeadToHead(table, game.white, game.black, 0.5);
         addHeadToHead(table, game.black, game.white, 0.5);
+        table[game.white].scoredGames.push({ opponent: game.black, score: 0.5 });
+        table[game.black].scoredGames.push({ opponent: game.white, score: 0.5 });
       }
     });
   });
@@ -619,8 +626,8 @@ function calculateStandings() {
     row.direct = rows
       .filter((other) => other.player !== row.player && other.points === row.points)
       .reduce((total, opponent) => total + directScore(row, opponent), 0);
-    row.buchholz = row.opponents.reduce(
-      (total, opponent) => total + (table[opponent]?.points || 0),
+    row.sonnebornBerger = row.scoredGames.reduce(
+      (total, game) => total + game.score * (table[game.opponent]?.points || 0),
       0,
     );
   });
@@ -628,7 +635,9 @@ function calculateStandings() {
   return rows.sort((a, b) => {
     if (b.points !== a.points) return b.points - a.points;
     if (b.direct !== a.direct) return b.direct - a.direct;
-    if (b.buchholz !== a.buchholz) return b.buchholz - a.buchholz;
+    if (b.sonnebornBerger !== a.sonnebornBerger) {
+      return b.sonnebornBerger - a.sonnebornBerger;
+    }
     if (b.wins !== a.wins) return b.wins - a.wins;
     return a.player.localeCompare(b.player);
   });
@@ -720,7 +729,7 @@ function finalTournamentPayload() {
       wins: row.wins,
       draws: row.draws,
       losses: row.losses,
-      buchholz: formatPoints(row.buchholz),
+      sonnebornBerger: formatPoints(row.sonnebornBerger),
     })),
     completed: submittedResults().length,
     totalGames: latestRounds.flat().length,
